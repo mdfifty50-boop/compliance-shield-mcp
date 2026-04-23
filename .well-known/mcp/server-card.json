@@ -1,0 +1,44 @@
+{
+  "serverInfo": {
+    "name": "compliance-shield-mcp",
+    "version": "0.1.0",
+    "description": "EU AI Act compliance audit trails and evidence generation for AI agent systems — risk classification, decision logging, gap analysis, and auditor-ready evidence packages",
+    "author": "THRONE AI",
+    "license": "MIT",
+    "homepage": "https://github.com/mdfifty50-boop/compliance-shield-mcp",
+    "repository": "https://github.com/mdfifty50-boop/compliance-shield-mcp"
+  },
+  "capabilities": {
+    "tools": [
+      { "name": "assess_risk_level", "description": "Classify an AI system under EU AI Act risk framework (Unacceptable, High, Limited, Minimal)" },
+      { "name": "create_audit_trail", "description": "Start a compliance audit trail for an AI system with responsible person assignment" },
+      { "name": "log_decision", "description": "Log an AI decision with input, output, reasoning, human oversight, model, and confidence" },
+      { "name": "check_compliance_gaps", "description": "Identify missing compliance requirements with article references and recommendations" },
+      { "name": "generate_evidence_package", "description": "Generate auditor-ready documentation with decision logs, oversight stats, and compliance status" },
+      { "name": "get_enforcement_timeline", "description": "Show upcoming EU AI Act enforcement deadlines with days remaining and penalty structure" }
+    ],
+    "resources": [
+      { "uri": "compliance://timeline", "description": "EU AI Act enforcement timeline with milestones and penalties" },
+      { "uri": "compliance://trails", "description": "List all active audit trails" }
+    ]
+  },
+  "categories": ["compliance", "governance", "audit", "regulatory", "eu-ai-act"],
+  "keywords": ["eu-ai-act", "compliance", "audit-trail", "risk-classification", "ai-governance", "evidence-generation", "regulatory", "gdpr"],
+  "pricing": {
+    "free_tier": true,
+    "free_limit": "Unlimited trails and decisions, in-memory only",
+    "pro": "$149/month — persistent storage, scheduled evidence reports, multi-tenant",
+    "enterprise": "$599/month — SSO, regulatory authority integration, custom risk frameworks"
+  },
+  "install": {
+    "npm": "npx compliance-shield-mcp",
+    "claude_desktop": {
+      "mcpServers": {
+        "compliance-shield": {
+          "command": "npx",
+          "args": ["compliance-shield-mcp"]
+        }
+      }
+    }
+  }
+}

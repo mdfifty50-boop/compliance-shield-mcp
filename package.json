@@ -1,0 +1,40 @@
+{
+  "name": "compliance-shield-mcp",
+  "version": "0.1.0",
+  "mcpName": "io.github.mdfifty50-boop/compliance-shield",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mdfifty50-boop/compliance-shield-mcp"
+  },
+  "description": "EU AI Act compliance audit trails and evidence generation for AI agent systems — risk classification, decision logging, gap analysis, and auditor-ready evidence packages",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "compliance-shield-mcp": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test src/**/*.test.js"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "eu-ai-act",
+    "compliance",
+    "audit-trail",
+    "risk-classification",
+    "ai-governance",
+    "regulatory",
+    "evidence-generation",
+    "model-context-protocol"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  }
+}

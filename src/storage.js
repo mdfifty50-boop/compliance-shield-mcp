@@ -1,11 +1,9 @@
 // ═══════════════════════════════════════════
-// In-memory storage for compliance audit trails
+// SQLite-backed storage for compliance audit trails
+// All function signatures are identical to the previous in-memory version.
 // ═══════════════════════════════════════════
 
-/** @type {Map<string, object>} trail_id -> trail data */
-const trails = new Map();
-
-let trailCounter = 0;
+import db from './db.js';
 
 // ═══════════════════════════════════════════
 // EU AI ACT RISK CLASSIFICATION ENGINE
@@ -107,60 +105,100 @@ export function assessRiskLevel(params) {
 
 // ═══════════════════════════════════════════
 // AUDIT TRAIL MANAGEMENT
+// Stored in: audits table
+// Decisions stored in: violations table (rule = 'decision', severity = 'info')
+// Additional trail metadata stored as JSON in findings_json
 // ═══════════════════════════════════════════
+
+const insertAudit = db.prepare(`
+  INSERT INTO audits (audit_id, agent_id, framework, status, findings_json, created_at)
+  VALUES (@audit_id, @agent_id, @framework, @status, @findings_json, @created_at)
+`);
+
+const getAudit = db.prepare(`SELECT * FROM audits WHERE audit_id = ?`);
+
+const updateAuditFindings = db.prepare(`
+  UPDATE audits SET findings_json = @findings_json WHERE audit_id = @audit_id
+`);
+
+const insertViolation = db.prepare(`
+  INSERT INTO violations (audit_id, agent_id, rule, severity, detail, timestamp)
+  VALUES (@audit_id, @agent_id, @rule, @severity, @detail, @timestamp)
+`);
+
+const getViolationsByAudit = db.prepare(`
+  SELECT * FROM violations WHERE audit_id = ? ORDER BY id ASC
+`);
+
+const allAudits = db.prepare(`SELECT * FROM audits ORDER BY created_at ASC`);
 
 /**
  * Create a new audit trail for an AI system.
  */
 export function createAuditTrail({ system_id, system_name, risk_classification, responsible_person }) {
-  trailCounter++;
-  const trail_id = `trail-${Date.now()}-${trailCounter}`;
+  const audit_id = `trail-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const created_at = new Date().toISOString();
 
-  const trail = {
-    trail_id,
-    system_id,
-    system_name,
-    risk_classification,
-    responsible_person,
-    created_at: new Date().toISOString(),
-    decisions: [],
-    decision_count: 0,
-  };
+  // findings_json stores extra trail metadata (system_id, system_name, responsible_person, decision_count)
+  const meta = { system_id, system_name, responsible_person, decision_count: 0 };
 
-  trails.set(trail_id, trail);
-  return { trail_id, created_at: trail.created_at };
+  insertAudit.run({
+    audit_id,
+    agent_id: system_id,
+    framework: risk_classification,
+    status: 'active',
+    findings_json: JSON.stringify(meta),
+    created_at,
+  });
+
+  return { trail_id: audit_id, created_at };
 }
 
 /**
  * Log an AI decision with traceability metadata.
+ * Decisions are stored as rows in the violations table with rule='decision'.
  */
 export function logDecision(trail_id, decision) {
-  const trail = trails.get(trail_id);
-  if (!trail) {
+  const row = getAudit.get(trail_id);
+  if (!row) {
     return { error: `Audit trail '${trail_id}' not found` };
   }
 
-  trail.decision_count++;
+  const meta = JSON.parse(row.findings_json);
+  meta.decision_count = (meta.decision_count || 0) + 1;
+  const decision_number = meta.decision_count;
 
-  const entry = {
-    decision_number: trail.decision_count,
-    timestamp: new Date().toISOString(),
+  // Persist updated decision count
+  updateAuditFindings.run({ audit_id: trail_id, findings_json: JSON.stringify(meta) });
+
+  const timestamp = new Date().toISOString();
+
+  // Store the full decision payload as JSON in the 'detail' column
+  const detail = JSON.stringify({
+    decision_number,
     input_summary: decision.input_summary,
     output_summary: decision.output_summary,
     reasoning: decision.reasoning,
     human_oversight: decision.human_oversight,
     model_used: decision.model_used,
     confidence: decision.confidence,
-  };
+  });
 
-  trail.decisions.push(entry);
+  insertViolation.run({
+    audit_id: trail_id,
+    agent_id: row.agent_id,
+    rule: 'decision',
+    severity: 'info',
+    detail,
+    timestamp,
+  });
 
   return {
     logged: true,
     trail_id,
-    decision_number: entry.decision_number,
-    timestamp: entry.timestamp,
-    total_decisions: trail.decision_count,
+    decision_number,
+    timestamp,
+    total_decisions: meta.decision_count,
   };
 }
 
@@ -172,14 +210,19 @@ export function logDecision(trail_id, decision) {
  * Check compliance gaps for a given audit trail.
  */
 export function checkComplianceGaps(trail_id) {
-  const trail = trails.get(trail_id);
-  if (!trail) {
+  const row = getAudit.get(trail_id);
+  if (!row) {
     return { error: `Audit trail '${trail_id}' not found` };
   }
 
+  const meta = JSON.parse(row.findings_json);
+  const riskLevel = row.framework.toLowerCase();
+
+  // Reconstruct decisions array from violations table
+  const decisionRows = getViolationsByAudit.all(trail_id).filter((v) => v.rule === 'decision');
+  const decisions = decisionRows.map((v) => JSON.parse(v.detail));
+
   const gaps = [];
-  const decisions = trail.decisions;
-  const riskLevel = trail.risk_classification.toLowerCase();
 
   // Check: Are decisions being logged?
   const hasDecisions = decisions.length > 0;
@@ -254,9 +297,9 @@ export function checkComplianceGaps(trail_id) {
   gaps.push({
     requirement: 'Designated responsible person',
     article: 'Article 26 — Obligations of Deployers',
-    status: trail.responsible_person ? 'met' : 'not_met',
-    recommendation: trail.responsible_person
-      ? `Responsible person: ${trail.responsible_person}`
+    status: meta.responsible_person ? 'met' : 'not_met',
+    recommendation: meta.responsible_person
+      ? `Responsible person: ${meta.responsible_person}`
       : 'No responsible person assigned — required for deployer obligations',
   });
 
@@ -266,8 +309,8 @@ export function checkComplianceGaps(trail_id) {
 
   return {
     trail_id,
-    system_name: trail.system_name,
-    risk_classification: trail.risk_classification,
+    system_name: meta.system_name,
+    risk_classification: row.framework,
     compliant: metCount === totalChecks,
     compliance_score: complianceScore,
     checks_passed: metCount,
@@ -284,13 +327,17 @@ export function checkComplianceGaps(trail_id) {
  * Generate auditor-ready evidence documentation.
  */
 export function generateEvidencePackage(trail_id, time_range_days = 30) {
-  const trail = trails.get(trail_id);
-  if (!trail) {
+  const row = getAudit.get(trail_id);
+  if (!row) {
     return { error: `Audit trail '${trail_id}' not found` };
   }
 
+  const meta = JSON.parse(row.findings_json);
   const cutoff = new Date(Date.now() - time_range_days * 24 * 60 * 60 * 1000).toISOString();
-  const filteredDecisions = trail.decisions.filter((d) => d.timestamp >= cutoff);
+
+  const decisionRows = getViolationsByAudit.all(trail_id).filter((v) => v.rule === 'decision');
+  const allDecisions = decisionRows.map((v) => ({ ...JSON.parse(v.detail), timestamp: v.timestamp }));
+  const filteredDecisions = allDecisions.filter((d) => d.timestamp >= cutoff);
 
   // Model usage breakdown
   const modelUsage = {};
@@ -323,16 +370,16 @@ export function generateEvidencePackage(trail_id, time_range_days = 30) {
       regulation: 'EU AI Act (Regulation (EU) 2024/1689)',
 
       system_info: {
-        system_id: trail.system_id,
-        system_name: trail.system_name,
-        risk_classification: trail.risk_classification,
-        responsible_person: trail.responsible_person,
-        trail_created: trail.created_at,
+        system_id: meta.system_id,
+        system_name: meta.system_name,
+        risk_classification: row.framework,
+        responsible_person: meta.responsible_person,
+        trail_created: row.created_at,
       },
 
       decision_log_summary: {
         total_decisions_in_range: filteredDecisions.length,
-        total_decisions_all_time: trail.decision_count,
+        total_decisions_all_time: meta.decision_count,
         period_start: cutoff,
         period_end: new Date().toISOString(),
         first_decision: filteredDecisions.length > 0 ? filteredDecisions[0].timestamp : null,
@@ -437,7 +484,7 @@ export function getEnforcementTimeline() {
       prohibited_violations: 'Up to 35M EUR or 7% of global annual turnover',
       high_risk_violations: 'Up to 15M EUR or 3% of global annual turnover',
       misinformation_to_authorities: 'Up to 7.5M EUR or 1% of global annual turnover',
-      sme_reduced_caps: 'Lower of the two amounts applies for SMEs and startups',
+      smd_reduced_caps: 'Lower of the two amounts applies for SMEs and startups',
     },
   };
 }
@@ -450,17 +497,17 @@ export function getEnforcementTimeline() {
  * List all active audit trails (for resource endpoint).
  */
 export function listTrails() {
-  const result = [];
-  for (const [id, trail] of trails) {
-    result.push({
-      trail_id: id,
-      system_id: trail.system_id,
-      system_name: trail.system_name,
-      risk_classification: trail.risk_classification,
-      responsible_person: trail.responsible_person,
-      decision_count: trail.decision_count,
-      created_at: trail.created_at,
-    });
-  }
-  return result;
+  const rows = allAudits.all();
+  return rows.map((row) => {
+    const meta = JSON.parse(row.findings_json);
+    return {
+      trail_id: row.audit_id,
+      system_id: meta.system_id,
+      system_name: meta.system_name,
+      risk_classification: row.framework,
+      responsible_person: meta.responsible_person,
+      decision_count: meta.decision_count || 0,
+      created_at: row.created_at,
+    };
+  });
 }
